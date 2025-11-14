@@ -1,0 +1,22 @@
+{
+  "configurations": [
+    {
+      "name": "ESP32",
+      "compilerPath": "C:/Users/ronya/AppData/Local/Arduino15/packages/esp32/tools/s3-gcc/2021r2-p5/bin/xtensa-esp32s3-elf-gcc.exe",
+      "intelliSenseMode": "gcc-x64",
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "defines": [
+        "ESP32",
+        "ARDUINO=10819"
+      ],
+      "includePath": [
+        "${workspaceFolder}/",
+        "C:/Users/ronya/AppData/Local/Arduino15/packages/esp32/**",
+        "C:/Users/ronya/Documents/Arduino/libraries/**"
+      ],
+      "forcedInclude": []
+    }
+  ],
+  "version": 4
+}
