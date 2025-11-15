@@ -1,13 +1,3 @@
-#!/usr/bin/env python3
-"""
-main.py — simple TCP client for ESP32
-------------------------------------
-Connects to ESP32 running a WiFiServer on a fixed IP (default: 192.168.1.200, port 3333)
-Sends messages typed by the user and prints responses.
-
-You can later import this file or extend it with functions to
-send sensor data, structured commands, etc.
-"""
 
 import socket
 import sys

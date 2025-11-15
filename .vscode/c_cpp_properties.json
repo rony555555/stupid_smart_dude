@@ -15,6 +15,15 @@
         "C:/Users/ronya/AppData/Local/Arduino15/packages/esp32/**",
         "C:/Users/ronya/Documents/Arduino/libraries/**"
       ],
+      "browse": {
+        "path": [
+          "${workspaceFolder}/",
+          "C:/Users/ronya/AppData/Local/Arduino15/packages/esp32/hardware/esp32",
+          "C:/Users/ronya/AppData/Local/Arduino15/packages/esp32/tools/esp32-arduino-libs",
+          "C:/Users/ronya/Documents/Arduino/libraries"
+        ],
+        "limitSymbolsToIncludedHeaders": true
+      },
       "forcedInclude": []
     }
   ],
