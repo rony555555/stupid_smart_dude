@@ -13,30 +13,124 @@ IPAddress secondaryDNS(10, 100, 102, 1);
 // const uint16_t PORT = 8000;
 // WiFiServer server(PORT);
 
-void waitForWiFi() {
+void startWiFiOnce() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     Serial.printf("Connecting to WiFi: %s\n", WIFI_SSID);
+
     uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
-        delay(200);
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 5000) {
+        delay(250);
         Serial.print(".");
     }
+
     Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
         Serial.print("WiFi connected. IP: ");
         Serial.println(WiFi.localIP());
     } else {
-        Serial.println("WiFi connect timeout (continuing offline).");
+        Serial.println("WiFi not found, connect timeout");
     }
 }
 
-void setup() {
-    delay(5000);
-    Serial.begin(115200);
-    Data.begin();
+void maintainWiFi() {
+    static unsigned long lastAttempt = 0;
+    const unsigned long RETRY_INTERVAL = 10000;
 
+    if (WiFi.status() == WL_CONNECTED) return;
+
+    unsigned long now = millis();
+    if (now - lastAttempt < RETRY_INTERVAL) return;
+    lastAttempt = now;
+
+    Serial.println("WiFi not connected, retrying...");
+
+    WiFi.disconnect(true, true);  // reset WiFi state
+    WiFi.mode(WIFI_STA);
+    WiFi.config(local_IP, gateway, subnet, primaryDNS, secondaryDNS);
+    WiFi.begin(WIFI_SSID, WIFI_PASS);
+}
+
+void maintainTime() {
+    static unsigned long lastNtpAttempt = 0;
+    const unsigned long NTP_RETRY_INTERVAL = 10000;
+
+    // If we already have valid time, we just let Data handle auto-resync
+    if (Data.isTimeValid()) {
+        Data.loopTime();
+        return;
+    }
+
+    if (WiFi.status() != WL_CONNECTED) {
+        return;  // Can't sync without WiFi; wait for maintainWiFi() to connect
+    }
+
+    unsigned long now = millis();
+    if (now - lastNtpAttempt < NTP_RETRY_INTERVAL) return;
+    lastNtpAttempt = now;
+
+    Serial.println("Time invalid, trying NTP sync...");
+    bool ok = Data.syncTimeFromNTP();
+    Serial.printf("NTP sync: %s\n", ok ? "OK" : "FAILED");
+}
+
+void checkAndRunSchedules() {
+    if (!Data.isTimeValid()) return;  // no global time yet, skip schedule logic
+
+    time_t nowEpoch = Data.getTime();
+    if (nowEpoch == 0) return;  // safety check
+
+    struct tm localTm;
+    localtime_r(&nowEpoch, &localTm);
+
+    // Only run logic once per minute
+    static int lastMinute = -1;
+    if (localTm.tm_min == lastMinute) return;  // still same minute as last check
+    lastMinute = localTm.tm_min;
+
+    // Debug print of the current time
+    Serial.printf("Now %02d:%02d (epoch %ld)\n",
+                  localTm.tm_hour,
+                  localTm.tm_min,
+                  (long)nowEpoch);
+
+    int nowMinutes = localTm.tm_hour * 60 + localTm.tm_min;  // Current time in "minutes since midnight"
+
+    // Go over all schedules
+    for (int i = 0; i < Data.getScheduleCount(); i++) {
+        ScheduleItem s = Data.getSchedule(i);
+        if (!s.enabled) continue;
+
+        // Parse timeOfDay like "9:03" or "09:03"
+        int sh = 0, sm = 0;
+        if (sscanf(s.timeOfDay.c_str(), "%d:%d", &sh, &sm) != 2) {
+            Serial.printf("Warning: bad time format in schedule [%d]: '%s'\n",
+                          i, s.timeOfDay.c_str());
+            continue;
+        }
+
+        int schedMinutes = sh * 60 + sm;
+
+        if (schedMinutes == nowMinutes) {
+            // This schedule should trigger now
+            Serial.printf("Trigger schedule [%d]: %s for %u minutes\n",
+                          i, s.timeOfDay.c_str(), s.duration);
+
+            // TODO: Call your motor here, e.g.:
+            // Motor.setDialMinutes(s.duration);
+        }
+    }
+}
+//////////////////////////////////////////////////
+//////////////////////////////////////////////////
+//////////////////////////////////////////////////
+
+void setup() {
+    delay(3000);
+    Serial.begin(115200);
     Serial.println("\nDevice Booted");
+
+    Data.begin();
     Serial.println("Loaded data from flash:");
 
     // set TZ once (it will be saved & reused next boots)
@@ -46,10 +140,12 @@ void setup() {
     }
 
     // Bring up Wi-Fi and attempt time sync
-    waitForWiFi();
+    startWiFiOnce();
     if (WiFi.status() == WL_CONNECTED) {
         bool ok = Data.syncTimeFromNTP();
         Serial.printf("Initial NTP sync: %s\n", ok ? "OK" : "FAILED");
+    } else {
+        Serial.println("Skipping initial NTP sync (no WiFi yet).");
     }
 
     // Optional: re-sync every 6 hours
@@ -61,53 +157,21 @@ void setup() {
         Data.addSchedule("05:45", 45, true);
         Data.addSchedule("18:00", 60, true);
     }
+    Data.removeSchedule(4);
+    Data.removeSchedule(3);
+    Data.removeSchedule(2);
+    Data.addSchedule("9:50", 1, true);
+    Data.addSchedule("09:51", 1, true);
+    Data.addSchedule("09:52", 1, false);
 
     Serial.println("Current schedules after setup:");
     Data.printAllSchedules();
 }
 
 void loop() {
-    // Keep internal time ticking and auto re-syncing when due
-    Data.loopTime();
-
-    // Example usage: only act on schedules if time is valid
-    if (Data.isTimeValid()) {
-        time_t nowEpoch = Data.getTime();
-        struct tm localTm;
-        localtime_r(&nowEpoch, &localTm);
-
-        // Build HH:MM string for comparison with schedule items
-        char hhmm[6];
-        snprintf(hhmm, sizeof(hhmm), "%02d:%02d", localTm.tm_hour, localTm.tm_min);
-
-        // Example: check each minute whether to trigger something
-        static uint8_t lastMinute = 255;
-        if (lastMinute != localTm.tm_min) {
-            lastMinute = localTm.tm_min;
-            Serial.printf("Now %02d:%02d (epoch %ld)\n", localTm.tm_hour, localTm.tm_min, (long)nowEpoch);
-
-            for (int i = 0; i < Data.getScheduleCount(); i++) {
-                ScheduleItem s = Data.getSchedule(i);
-                if (s.enabled && s.timeOfDay == String(hhmm)) {
-                    Serial.printf("Trigger schedule [%d]: %s for %u minutes\n", i, s.timeOfDay.c_str(), s.duration);
-                    // TODO: Call your motor: move dial to match 'duration'
-                    // e.g., Motor.setDialMinutes(s.duration);
-                }
-            }
-        }
-    } else {
-        // Time invalid → do not run time-based logic
-        // Optionally retry NTP if Wi-Fi came up later:
-        static uint32_t lastRetry = 0;
-        if (WiFi.status() == WL_CONNECTED && millis() - lastRetry > 10000) {
-            lastRetry = millis();
-            if (Data.syncTimeFromNTP()) {
-                Serial.println("NTP sync (retry) OK");
-            } else {
-                Serial.println("NTP sync (retry) failed");
-            }
-        }
-    }
+    maintainWiFi();
+    maintainTime();
+    checkAndRunSchedules();
 
     delay(50);
 }

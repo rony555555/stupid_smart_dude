@@ -173,15 +173,26 @@ void DataManager::loadSchedules() {
 }
 
 // --- Schedule management ---
+static String normalizeTimeString(const String& t) {
+    int h = 0, m = 0;
+    if (sscanf(t.c_str(), "%d:%d", &h, &m) == 2) {
+        char buf[6];
+        snprintf(buf, sizeof(buf), "%02d:%02d", h, m);
+        return String(buf);
+    }
+    // fallback if parse fails
+    return t;
+}
+
 void DataManager::addSchedule(String timeOfDay, uint16_t duration, bool enabled) {
-    ScheduleItem item = {timeOfDay, duration, enabled};
+    ScheduleItem item = {normalizeTimeString(timeOfDay), duration, enabled};
     schedules.push_back(item);
     saveSchedules();
 }
 
 void DataManager::updateSchedule(int index, String timeOfDay, uint16_t duration, bool enabled) {
     if (!isValidScheduleIndex(index)) return;
-    schedules[index] = {timeOfDay, duration, enabled};
+    schedules[index] = {normalizeTimeString(timeOfDay), duration, enabled};
     saveSchedules();
 }
 
