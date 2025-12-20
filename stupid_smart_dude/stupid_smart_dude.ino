@@ -1,15 +1,19 @@
 #include <WiFi.h>
+#include <Adafruit_NeoPixel.h>
 #include "src/data/data.h"
 #include "src/timeManager/timeManager.h"
 #include "src/motor/motor.h"
 
-#define EN_PIN 10 // ENABLE (active LOW) 
-#define STEP_PIN 11 // STEP 
-#define DIR_PIN 12 // DIR
+#define EN_PIN 10    // ENABLE (active LOW)
+#define STEP_PIN 11  // STEP
+#define DIR_PIN 12   // DIR
 
 using namespace Motor;
 const uint16_t gearRatio = 4;
-const float angleToStep = 3200/360;
+const float angleToStep = 3200 / 360;
+static bool dudeTimerActive = false;
+static uint32_t dudeTimerEndMs = 0;
+static int32_t dudeTimerStepsTo90 = 0;
 
 const char* WIFI_SSID = "Yadin";
 const char* WIFI_PASS = "54005400";
@@ -23,6 +27,40 @@ IPAddress secondaryDNS(10, 100, 102, 1);
 // const uint16_t PORT = 8000;
 // WiFiServer server(PORT);
 
+#define RGB_PIN 48    // as in OceanLabz example
+#define NUM_PIXELS 1  // only one onboard LED
+
+Adafruit_NeoPixel pixel(NUM_PIXELS, RGB_PIN, NEO_GRB + NEO_KHZ800);
+
+void initRgbLed() {
+    pixel.begin();
+    pixel.setBrightness(100);  // 0–255, tweak if it's too bright
+    pixel.clear();
+    pixel.show();
+}
+
+void setRgbColor(uint8_t r, uint8_t g, uint8_t b) {
+    pixel.setPixelColor(0, pixel.Color(r, g, b));
+    pixel.show();
+}
+
+void rgbOff() {
+    pixel.clear();
+    pixel.show();
+}
+
+void blinkColor(uint8_t r, uint8_t g, uint8_t b, uint16_t onMs, uint16_t offMs) {
+    setRgbColor(r, g, b);
+    delay(onMs);
+    rgbOff();
+    delay(offMs);
+}
+
+void indicateMinuteTick() {
+    // 1 small blue blink
+    blinkColor(0, 0, 255, 80, 40);  // blue
+}
+
 void setDudeTimer(uint16_t duration) {
     if (duration > 120) {
         Serial.println("invalid duration");
@@ -32,9 +70,8 @@ void setDudeTimer(uint16_t duration) {
     uint16_t durationToAngle = 0;
     if (duration <= 60) {
         durationToAngle = static_cast<uint16_t>(duration * 3);
-    }
-    else { // duration bigger then 60
-        durationToAngle = static_cast<uint16_t>(180 + ((duration - 60) * 135/60));
+    } else {  // duration bigger then 60
+        durationToAngle = static_cast<uint16_t>(180 + ((duration - 60) * 135 / 60));
     }
     uint16_t steps = static_cast<uint16_t>(durationToAngle * gearRatio * angleToStep);
     Motor::moveMotor(Motor::COUNTER_CLOCKWISE, steps);
@@ -120,6 +157,7 @@ void checkAndRunSchedules() {
                   localTm.tm_hour,
                   localTm.tm_min,
                   (long)nowEpoch);
+    indicateMinuteTick();
 
     int nowMinutes = localTm.tm_hour * 60 + localTm.tm_min;  // Current time in "minutes since midnight"
 
@@ -156,6 +194,8 @@ void setup() {
     Serial.begin(115200);
     Serial.println("\nDevice Booted");
 
+    initRgbLed();
+
     Data.begin();
     Serial.println("Loaded data from flash:");
     Time.begin();
@@ -185,9 +225,11 @@ void setup() {
         Data.addSchedule("05:45", 45, true);
         Data.addSchedule("18:00", 60, true);
     }
-    Data.removeSchedule(4);
-    Data.removeSchedule(3);
-    Data.removeSchedule(2);
+    // Data.removeSchedule(4);
+    // Data.removeSchedule(3);
+    // Data.removeSchedule(2);
+    // Data.removeSchedule(1);
+    // Data.removeSchedule(0);
     // Data.addSchedule("00:05", 45, true);
     // Data.addSchedule("00:06", 10, false);
     // Data.addSchedule("00:07", 90, true);
@@ -200,6 +242,10 @@ void loop() {
     maintainWiFi();
     maintainTime();
     checkAndRunSchedules();
+    // Motor::moveMotor(Motor::COUNTER_CLOCKWISE, 2000);
+    // delay(10);
+    // Motor::moveMotor(Motor::CLOCKWISE, 5000);
+    // delay(10000);
 
     delay(50);
 }
