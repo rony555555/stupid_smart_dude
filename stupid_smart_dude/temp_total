@@ -11,6 +11,9 @@
 using namespace Motor;
 const uint16_t gearRatio = 4;
 const float angleToStep = 3200 / 360;
+static bool dudeTimerActive = false;
+static uint32_t dudeTimerEndMs = 0;
+static int32_t dudeTimerStepsTo90 = 0;
 
 const char* WIFI_SSID = "Yadin";
 const char* WIFI_PASS = "54005400";
@@ -64,14 +67,43 @@ void setDudeTimer(uint16_t duration) {
         return;
     }
 
-    uint16_t durationToAngle = 0;
-    if (duration <= 60) {
-        durationToAngle = static_cast<uint16_t>(duration * 3);
-    } else {  // duration bigger then 60
-        durationToAngle = static_cast<uint16_t>(180 + ((duration - 60) * 135 / 60));
+    // Precompute steps needed for 90° (fixed target) once.
+    if (dudeTimerStepsTo90 == 0) {
+        const float stepsF = 90.0f * (float)gearRatio * angleToStep;
+        dudeTimerStepsTo90 = (int32_t)(stepsF + 0.5f);  // round
     }
-    uint16_t steps = static_cast<uint16_t>(durationToAngle * gearRatio * angleToStep);
-    Motor::moveMotor(Motor::COUNTER_CLOCKWISE, steps);
+
+    // If a timer is already running, gracefully cancel it by returning home first.
+    if (dudeTimerActive) {
+        Serial.println("Dude timer already active — cancelling and restarting");
+        Motor::enable();
+        Motor::moveMotor(Motor::CLOCKWISE, dudeTimerStepsTo90);
+        Motor::disable();
+        dudeTimerActive = false;
+    }
+
+    // Go to 90° and keep motor enabled while the countdown runs.
+    Motor::enable();
+    Motor::moveMotor(Motor::COUNTER_CLOCKWISE, dudeTimerStepsTo90);
+
+    // Duration is in minutes.
+    const uint32_t durationMs = (uint32_t)duration * 60UL * 1000UL;
+    dudeTimerEndMs = millis() + durationMs;
+    dudeTimerActive = true;
+    Serial.printf("Dude timer started: %u min (return at +%lu ms)\n",
+                  duration, (unsigned long)durationMs);
+}
+
+void serviceDudeTimer() {
+    if (!dudeTimerActive) return;
+
+    // Handle millis() wrap by using signed subtraction.
+    if ((int32_t)(millis() - dudeTimerEndMs) < 0) return;
+
+    Serial.println("Dude timer finished — returning home");
+    Motor::moveMotor(Motor::CLOCKWISE, dudeTimerStepsTo90);
+    Motor::disable();
+    dudeTimerActive = false;
 }
 
 void startWiFiOnce() {
@@ -216,18 +248,22 @@ void setup() {
     // Optional: re-sync every 6 hours
     Time.enableAutoResync(6UL * 3600UL);
 
+    // Data.removeSchedule(1);
+    // Data.removeSchedule(0);
     // add schedules manually
     if (Data.getScheduleCount() == 0) {
         Serial.println("No schedules found — creating test schedules...");
-        Data.addSchedule("05:45", 45, true);
-        Data.addSchedule("18:00", 60, true);
+        Data.addSchedule("05:45", 60, true);
+        Data.addSchedule("18:00", 75, true);
     }
-    Data.removeSchedule(4);
-    Data.removeSchedule(3);
-    Data.removeSchedule(2);
-    // Data.addSchedule("00:05", 45, true);
-    // Data.addSchedule("00:06", 10, false);
-    // Data.addSchedule("00:07", 90, true);
+    // Data.removeSchedule(4);
+    // Data.removeSchedule(3);
+    // Data.removeSchedule(2);
+    // Data.removeSchedule(1);
+    // Data.removeSchedule(0);
+    // Data.addSchedule("13:11", 3, true);
+    // Data.addSchedule("13:09", 3, false);
+    // Data.addSchedule("13:12", 1, true);
 
     Serial.println("Current schedules after setup:");
     Data.printAllSchedules();
@@ -237,6 +273,12 @@ void loop() {
     maintainWiFi();
     maintainTime();
     checkAndRunSchedules();
+    serviceDudeTimer();
+
+    // Motor::moveMotor(Motor::COUNTER_CLOCKWISE, 2000);
+    // delay(10);
+    // Motor::moveMotor(Motor::CLOCKWISE, 5000);
+    // delay(10000);
 
     delay(50);
 }

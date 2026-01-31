@@ -1,77 +1,64 @@
-#include "Motor.h"
+#include "motor.h"
 
 namespace Motor {
+  static uint8_t  s_servoPin = 255;
+  static uint8_t  s_enablePin = 255;
+  static uint16_t s_minUs = 500, s_midUs = 1500, s_maxUs = 2500;
+  static uint16_t s_freq = 50;
+  static uint8_t  s_res = 14;
+  static bool     s_attached = false;
 
-    // Internal state
-    static uint8_t _enPin   = 255;
-    static uint8_t _stepPin = 255;
-    static uint8_t _dirPin  = 255;
+  static uint32_t usToDuty(uint32_t us) {
+    uint32_t maxDuty = (1UL << s_res) - 1;
+    return (us * maxDuty) / 20000UL; // 20ms period for 50Hz
+  }
 
-    static unsigned long _stepIntervalUs = 5000UL;  // default 200 Hz
+  bool init(uint8_t servoPin, uint8_t enablePin,
+            uint16_t minUs, uint16_t midUs, uint16_t maxUs,
+            uint16_t freq, uint8_t resolutionBits) {
+    s_servoPin = servoPin;
+    s_enablePin = enablePin;
+    s_minUs = minUs;
+    s_midUs = midUs;
+    s_maxUs = maxUs;
+    s_freq = freq;
+    s_res = resolutionBits;
 
+    pinMode(s_enablePin, OUTPUT);
+    digitalWrite(s_enablePin, LOW);   // disabled by default
 
-    static void doStep() {
-        digitalWrite(_stepPin, HIGH);
-        delayMicroseconds(2);                 // A4988 pulse width (>1us)
-        digitalWrite(_stepPin, LOW);
-        delayMicroseconds(_stepIntervalUs);   // interval between steps
+    // don't attach yet; attach only on enable()
+    s_attached = false;
+    return true;
+  }
+
+  void enable() {
+    digitalWrite(s_enablePin, HIGH);
+
+    if (!s_attached) {
+      s_attached = ledcAttach(s_servoPin, s_freq, s_res);
     }
+    // stop by default
+    if (s_attached) ledcWrite(s_servoPin, usToDuty(s_midUs));
+  }
 
-    static void moveSteps(Direction direction, int32_t steps) {
-        if (steps <= 0) return;
-
-        digitalWrite(_dirPin, (direction == COUNTER_CLOCKWISE) ? HIGH : LOW);
-
-        for (int32_t i = 0; i < steps; i++) {
-            doStep();
-        }
+  void disable() {
+    // stop first
+    if (s_attached) {
+      ledcWrite(s_servoPin, usToDuty(s_midUs));
+      delay(20);
+      ledcDetach(s_servoPin);
+      s_attached = false;
     }
+    digitalWrite(s_enablePin, LOW);
+  }
 
-    static void wiggle(Direction direction) {
-        Direction opposite = (direction == CLOCKWISE) ? COUNTER_CLOCKWISE : CLOCKWISE;
+  void writeUs(uint16_t us) {
+    if (!s_attached) return;
+    ledcWrite(s_servoPin, usToDuty(us));
+  }
 
-        for (uint8_t i = 0; i < 2; i++) {
-            moveSteps(direction, 1);
-            moveSteps(opposite, 1);
-        }
-    }
-
-    void init(uint8_t enPin, uint8_t stepPin, uint8_t dirPin,
-              unsigned long stepIntervalUs) {
-        _enPin   = enPin;
-        _stepPin = stepPin;
-        _dirPin  = dirPin;
-
-        _stepIntervalUs = stepIntervalUs;
-
-        pinMode(_stepPin, OUTPUT);
-        pinMode(_dirPin,  OUTPUT);
-        pinMode(_enPin,   OUTPUT);
-
-        digitalWrite(_stepPin, LOW);
-        digitalWrite(_dirPin,  LOW);
-        digitalWrite(_enPin,   HIGH);  // keep disabled until used
-    }
-
-    void setStepInterval(unsigned long stepIntervalUs) {
-        _stepIntervalUs = stepIntervalUs;
-    }
-
-    void enable() {
-        digitalWrite(_enPin, LOW);   // active LOW
-    }
-
-    void disable() {
-        digitalWrite(_enPin, HIGH);
-    }
-
-    void moveMotor(Direction direction, int32_t steps) {
-        if (steps <= 0) return;
-
-        enable();
-        wiggle(direction);
-        moveSteps(direction, steps);
-        disable();
-    }
-
-} // namespace Motor
+  void cw()   { writeUs(s_minUs); }
+  void ccw()  { writeUs(s_maxUs); }
+  void stop() { writeUs(s_midUs); }
+}

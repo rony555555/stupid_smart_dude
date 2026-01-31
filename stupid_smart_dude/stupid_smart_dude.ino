@@ -4,16 +4,20 @@
 #include "src/timeManager/timeManager.h"
 #include "src/motor/motor.h"
 
-#define EN_PIN 10    // ENABLE (active LOW)
-#define STEP_PIN 11  // STEP
-#define DIR_PIN 12   // DIR
+#define SERVO_PIN 17
+#define SERVO_EN_PIN 20  // HIGH=enable, LOW=disable
+
+#define SERVO_MIN_US 1350
+// #define SERVO_MIN_US 500
+#define SERVO_MID_US 1500
+// #define SERVO_MAX_US 2500
+#define SERVO_MAX_US 1650
+
+#define DUDE_MOVE_MS 1300
 
 using namespace Motor;
-const uint16_t gearRatio = 4;
-const float angleToStep = 3200 / 360;
 static bool dudeTimerActive = false;
 static uint32_t dudeTimerEndMs = 0;
-static int32_t dudeTimerStepsTo90 = 0;
 
 const char* WIFI_SSID = "Yadin";
 const char* WIFI_PASS = "54005400";
@@ -29,6 +33,7 @@ IPAddress secondaryDNS(10, 100, 102, 1);
 
 #define RGB_PIN 48    // as in OceanLabz example
 #define NUM_PIXELS 1  // only one onboard LED
+#define TIME_OK_BLINK_INTERVAL_MS 5000
 
 Adafruit_NeoPixel pixel(NUM_PIXELS, RGB_PIN, NEO_GRB + NEO_KHZ800);
 
@@ -58,7 +63,25 @@ void blinkColor(uint8_t r, uint8_t g, uint8_t b, uint16_t onMs, uint16_t offMs) 
 
 void indicateMinuteTick() {
     // 1 small blue blink
-    blinkColor(0, 0, 255, 80, 40);  // blue
+    blinkColor(0, 0, 20, 80, 40);  // blue
+}
+
+void indicateTimeOk() {
+    // 1 small green blink
+    blinkColor(0, 5, 0, 80, 40);  // blue
+}
+
+void serviceTimeValidBlink() {
+    static uint32_t lastBlinkMs = 0;
+
+    if (!Time.isTimeValid()) return;
+
+    uint32_t now = millis();
+    if (now - lastBlinkMs < TIME_OK_BLINK_INTERVAL_MS) return;
+    lastBlinkMs = now;
+
+    // weak green blink
+    indicateTimeOk();
 }
 
 void setDudeTimer(uint16_t duration) {
@@ -67,24 +90,31 @@ void setDudeTimer(uint16_t duration) {
         return;
     }
 
-    // Precompute steps needed for 90° (fixed target) once.
-    if (dudeTimerStepsTo90 == 0) {
-        const float stepsF = 90.0f * (float)gearRatio * angleToStep;
-        dudeTimerStepsTo90 = (int32_t)(stepsF + 0.5f);  // round
-    }
-
     // If a timer is already running, gracefully cancel it by returning home first.
     if (dudeTimerActive) {
-        Serial.println("Dude timer already active — cancelling and restarting");
-        Motor::enable();
-        Motor::moveMotor(Motor::CLOCKWISE, dudeTimerStepsTo90);
-        Motor::disable();
-        dudeTimerActive = false;
+        uint32_t now = millis();
+        int32_t remainingMs = (int32_t)(dudeTimerEndMs - now);
+        if (remainingMs < 0) remainingMs = 0;
+        uint32_t requestedMs = (uint32_t)duration * 60UL * 1000UL;
+
+        if (requestedMs > (uint32_t)remainingMs) {
+            dudeTimerEndMs = now + requestedMs;
+            Serial.printf(
+                "Dude timer extended: remaining %lu ms, new %lu ms\n",
+                (unsigned long)remainingMs,
+                (unsigned long)requestedMs);
+        } else {
+            Serial.println("Dude timer already running with longer remaining time — ignoring");
+        }
+        return;
     }
 
-    // Go to 90° and keep motor enabled while the countdown runs.
     Motor::enable();
-    Motor::moveMotor(Motor::COUNTER_CLOCKWISE, dudeTimerStepsTo90);
+    delay(1000);
+    Motor::ccw();
+    delay(DUDE_MOVE_MS);
+    Motor::stop();
+    Motor::stop();
 
     // Duration is in minutes.
     const uint32_t durationMs = (uint32_t)duration * 60UL * 1000UL;
@@ -97,11 +127,16 @@ void setDudeTimer(uint16_t duration) {
 void serviceDudeTimer() {
     if (!dudeTimerActive) return;
 
+    // Motor::stop();
     // Handle millis() wrap by using signed subtraction.
     if ((int32_t)(millis() - dudeTimerEndMs) < 0) return;
 
     Serial.println("Dude timer finished — returning home");
-    Motor::moveMotor(Motor::CLOCKWISE, dudeTimerStepsTo90);
+    Motor::cw();
+    delay(DUDE_MOVE_MS + 100);
+    Motor::stop();
+    Motor::stop();
+    delay(1000);
     Motor::disable();
     dudeTimerActive = false;
 }
@@ -214,6 +249,7 @@ void checkAndRunSchedules() {
         }
     }
 }
+
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
 //////////////////////////////////////////////////
@@ -228,7 +264,7 @@ void setup() {
     Data.begin();
     Serial.println("Loaded data from flash:");
     Time.begin();
-    Motor::init(EN_PIN, STEP_PIN, DIR_PIN);
+    Motor::init(SERVO_PIN, SERVO_EN_PIN, SERVO_MIN_US, SERVO_MID_US, SERVO_MAX_US);
 
     // set TZ once (it will be saved & reused next boots)
     if (Time.getTimezone().length() == 0) {
@@ -253,17 +289,21 @@ void setup() {
     // add schedules manually
     if (Data.getScheduleCount() == 0) {
         Serial.println("No schedules found — creating test schedules...");
-        Data.addSchedule("05:45", 60, true);
-        Data.addSchedule("18:00", 75, true);
+        Data.addSchedule("05:40", 70, true);
+        Data.addSchedule("17:45", 75, true);
     }
+    // Data.removeSchedule(6);
+    // Data.removeSchedule(5);
     // Data.removeSchedule(4);
     // Data.removeSchedule(3);
     // Data.removeSchedule(2);
     // Data.removeSchedule(1);
     // Data.removeSchedule(0);
-    // Data.addSchedule("13:11", 3, true);
-    // Data.addSchedule("13:09", 3, false);
-    // Data.addSchedule("13:12", 1, true);
+    // Data.addSchedule("14:20", 5, true);
+    // Data.addSchedule("14:20", 3, false);
+    // Data.addSchedule("14:30", 5, true);
+    // Data.addSchedule("14:40", 5, true);
+    // Data.addSchedule("14:43", 5, true);
 
     Serial.println("Current schedules after setup:");
     Data.printAllSchedules();
@@ -274,11 +314,32 @@ void loop() {
     maintainTime();
     checkAndRunSchedules();
     serviceDudeTimer();
+    serviceTimeValidBlink();
 
-    // Motor::moveMotor(Motor::COUNTER_CLOCKWISE, 2000);
-    // delay(10);
-    // Motor::moveMotor(Motor::CLOCKWISE, 5000);
-    // delay(10000);
+    // Motor::enable();
+    // Serial.println("enable");
+    // delay(1000);
+    // Serial.println("ccw");
+    // Motor::ccw();
+    // delay(1300);
+    // // delay(170);
+    // Serial.println("stop");
+    // Motor::stop();
+    // Motor::stop();
+    // Motor::stop();
+    // delay(20000);
+    // Serial.println("cw");
+    // Motor::cw();
+    // delay(1400);
+    // // delay(150);
+    // Serial.println("stop");
+    // Motor::stop();
+    // Motor::stop();
+    // Motor::stop();
+    // delay(3000);
+    // Serial.println("disable");
+    // Motor::disable();
+    // delay(3000);
 
-    delay(50);
+    delay(5);
 }
